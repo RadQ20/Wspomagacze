@@ -1,0 +1,180 @@
+function przetworzDaneBezZdjecia() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getActiveSheet();
+  const data = sheet.getDataRange().getValues();
+
+  const header = data[0];
+  const requiredColumns = [
+    "Title", "Published", "Option1 Value", "Option2 Value",
+    "Variant SKU", "Variant Inventory Qty", "Variant Image"
+  ];
+
+  // Mapowanie nagłówków
+  const columnMap = {};
+  header.forEach((name, index) => {
+    const cleaned = name.trim();
+    if (requiredColumns.includes(cleaned)) {
+      columnMap[cleaned] = index;
+    }
+  });
+
+  // Budujemy nową tablicę z wybranymi kolumnami
+  const newHeader = requiredColumns;
+  const newData = [newHeader];
+
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    const newRow = requiredColumns.map(col => row[columnMap[col]]);
+    newData.push(newRow);
+  }
+
+  // Tworzymy lub czyścimy arkusz "Bez zdjęcia"
+  let resultSheet = ss.getSheetByName("Bez zdjęcia");
+  if (!resultSheet) {
+    resultSheet = ss.insertSheet("Bez zdjęcia");
+  } else {
+    resultSheet.clearContents();
+  }
+
+  // Wstawiamy dane do arkusza "Bez zdjęcia"
+  resultSheet.getRange(1, 1, newData.length, newData[0].length).setValues(newData);
+
+  // Uzupełnianie pustych komórek w kolumnie Title i Published
+  uzupelnijPusteKomorkiKolumna(resultSheet, 1); // kolumna A
+  uzupelnijPusteKomorkiKolumna(resultSheet, 2); // kolumna B
+
+  const refreshedData = resultSheet.getDataRange().getValues();
+
+  // Wczytaj dane sprzedażowe z arkusza "Ostatnia sprzedaż"
+  const salesSheet = ss.getSheetByName("Ostatnia sprzedaż");
+  const salesData = salesSheet ? salesSheet.getDataRange().getValues() : [];
+  const salesMap = {};
+
+  if (salesData.length > 1) {
+    const skuIndex = salesData[0].indexOf("SKU");
+    const dateIndex = salesData[0].indexOf("Ostatnia sprzedaż");
+
+    for (let i = 1; i < salesData.length; i++) {
+      const sku = salesData[i][skuIndex];
+      const date = new Date(salesData[i][dateIndex]);
+      if (!salesMap[sku] || salesMap[sku] < date) {
+        salesMap[sku] = date;
+      }
+    }
+  }
+
+  // Grupowanie wg Title + Color
+  const groups = {};
+
+  for (let i = 1; i < refreshedData.length; i++) {
+    const row = refreshedData[i];
+    const title = row[0];
+    const published = row[1];
+    const color = row[2];
+    const qty = Number(row[5]);
+    const image = row[6];
+    const sku = row[4];
+
+    const key = `${title}|||${color}`;
+
+    if (!groups[key]) {
+      groups[key] = {
+        rows: [],
+        skus: [],
+        hasStock: false,
+        hasImage: false,
+        published: published === true || published === "TRUE"
+      };
+    }
+
+    groups[key].rows.push(row);
+    groups[key].skus.push(sku);
+
+    if (qty > 0) groups[key].hasStock = true;
+    if (image !== "") groups[key].hasImage = true;
+  }
+
+  // Tworzenie końcowego wyniku
+  const finalData = [["Title", "Color", "Ostatnia sprzedaż"]];
+
+  for (const key in groups) {
+    const group = groups[key];
+    const sampleTitle = group.rows[0][0];
+
+    if (sampleTitle === "Bon podarunkowy") continue;
+
+    // Szukamy produktów ze stockiem, ale bez zdjęcia
+    if (group.hasStock && !group.hasImage && group.published) {
+      const firstRow = group.rows[0];
+      const title = firstRow[0];
+      const color = firstRow[2];
+
+      let latestDate = null;
+      group.skus.forEach(sku => {
+        const date = salesMap[sku];
+        if (date && (!latestDate || date > latestDate)) {
+          latestDate = date;
+        }
+      });
+
+      finalData.push([
+        title,
+        color,
+        latestDate ? new Date(latestDate) : "-"
+      ]);
+    }
+  }
+
+  // Sortowanie po kolumnie A (Title)
+  const dataToSort = finalData.slice(1);
+  dataToSort.sort((a, b) => a[0].localeCompare(b[0], 'pl', { sensitivity: 'base' }));
+
+  const sortedFinalData = [finalData[0], ...dataToSort];
+
+  // Wstaw wynik do arkusza
+  resultSheet.clearContents();
+  resultSheet.getRange(1, 1, sortedFinalData.length, 3).setValues(sortedFinalData);
+
+  // Formatowanie: daty
+  if (sortedFinalData.length > 1) {
+    resultSheet.getRange(2, 3, sortedFinalData.length - 1).setNumberFormat("yyyy-mm-dd hh:mm");
+  }
+
+  // Obramowanie
+  const range = resultSheet.getRange(1, 1, sortedFinalData.length, 3);
+  range.setBorder(true, true, true, true, true, true, "black", SpreadsheetApp.BorderStyle.SOLID);
+
+  // Styl nagłówka
+  const headerRange = resultSheet.getRange(1, 1, 1, 3);
+  headerRange.setFontWeight("bold");
+  headerRange.setHorizontalAlignment("center");
+  headerRange.setBackground("#fce5cd");
+
+  // Zablokuj nagłówek
+  resultSheet.setFrozenRows(1);
+
+  // Wyśrodkuj kolumny B i C
+  if (sortedFinalData.length > 1) {
+    resultSheet.getRange(2, 2, sortedFinalData.length - 1, 2).setHorizontalAlignment("center");
+  }
+
+  // Auto-szerokość
+  resultSheet.autoResizeColumns(1, 3);
+}
+
+function uzupelnijPusteKomorkiKolumna(sheet, columnIndex) {
+  const lastRow = sheet.getLastRow();
+  const range = sheet.getRange(1, columnIndex, lastRow);
+  const values = range.getValues();
+
+  let lastValue = null;
+  for (let i = 0; i < values.length; i++) {
+    if (values[i][0] !== "") {
+      lastValue = values[i][0];
+    } else if (lastValue !== null) {
+      values[i][0] = lastValue;
+    }
+  }
+
+  range.setValues(values);
+}
