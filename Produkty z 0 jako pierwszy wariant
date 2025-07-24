@@ -1,0 +1,86 @@
+function sprawdzKolejnoscKolorow() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getActiveSheet();
+  const data = sheet.getDataRange().getValues();
+
+  const header = data[0];
+  const titleCol = header.indexOf("Title");
+  const colorCol = header.indexOf("Option1 Value");
+  const qtyCol = header.indexOf("Variant Inventory Qty");
+  const publishedCol = header.indexOf("Published"); // <- dodano
+
+  if ([titleCol, colorCol, qtyCol, publishedCol].includes(-1)) {
+    SpreadsheetApp.getUi().alert("Brakuje wymaganych kolumn: Title, Option1 Value, Variant Inventory Qty, Published");
+    return;
+  }
+
+  const results = [["Title", "Wymaga zmiany?"]];
+  const productMap = {};
+  const productStatus = {}; // przechowuje czy produkt jest opublikowany
+
+  // Grupowanie wierszy wg produktu
+  for (let i = 1; i < data.length; i++) {
+    const title = data[i][titleCol];
+    const color = data[i][colorCol];
+    const qty = Number(data[i][qtyCol]);
+    const published = data[i][publishedCol];
+
+    if (!(published === true || published === "TRUE")) continue; // <- filtr opublikowanych
+
+    if (!productMap[title]) {
+      productMap[title] = [];
+    }
+    productMap[title].push({ color, qty });
+  }
+
+  // Analiza kolejności
+  for (const title in productMap) {
+    const rows = productMap[title];
+    const colorBlocks = [];
+
+    let currentColor = rows[0].color;
+    let currentQtySum = 0;
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      if (row.color === currentColor) {
+        currentQtySum += row.qty;
+      } else {
+        colorBlocks.push({ color: currentColor, qty: currentQtySum });
+        currentColor = row.color;
+        currentQtySum = row.qty;
+      }
+    }
+    colorBlocks.push({ color: currentColor, qty: currentQtySum });
+
+    // Sprawdź, czy pierwsze kolory mają qty == 0, a któryś później ma > 0
+    let requiresChange = false;
+    for (let i = 0; i < colorBlocks.length; i++) {
+      if (colorBlocks[i].qty > 0) {
+        requiresChange = i > 0;
+        break;
+      }
+    }
+
+    if (requiresChange) {
+      results.push([title, "TAK"]);
+    }
+  }
+
+  // Stwórz nowy arkusz z wynikami
+  const resultSheetName = "Do zmiany kolejności";
+  let resultSheet = ss.getSheetByName(resultSheetName);
+  if (resultSheet) ss.deleteSheet(resultSheet);
+  resultSheet = ss.insertSheet(resultSheetName);
+  resultSheet.getRange(1, 1, results.length, 2).setValues(results);
+
+  // Stylizacja
+  const headerRange = resultSheet.getRange(1, 1, 1, 2);
+  headerRange.setFontWeight("bold");
+  headerRange.setHorizontalAlignment("center");
+  headerRange.setBackground("#ead1dc");
+  resultSheet.setFrozenRows(1);
+  resultSheet.getDataRange().setBorder(true, true, true, true, true, true);
+  resultSheet.autoResizeColumns(1, 2);
+  resultSheet.getRange(2, 2, results.length - 1, 1).setHorizontalAlignment("center");
+}
