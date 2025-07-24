@@ -1,0 +1,52 @@
+function znajdzZdublowaneZdjeciaPoBazowejNazwie() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  const data = sheet.getDataRange().getValues();
+
+  // Znajdź indeksy kolumn
+  const header = data[0];
+  const titleColIndex = header.indexOf("Title");
+  const imageColIndex = header.indexOf("Image Src");
+
+  if (titleColIndex === -1 || imageColIndex === -1) {
+    SpreadsheetApp.getUi().alert('Brakuje kolumny "Title" lub "Image Src"!');
+    return;
+  }
+
+  // Dodaj kolumnę "Status" jeśli nie istnieje
+  let statusColIndex = header.indexOf("Status");
+  if (statusColIndex === -1) {
+    sheet.insertColumnAfter(imageColIndex + 1);
+    sheet.getRange(1, imageColIndex + 2).setValue("Status");
+    statusColIndex = imageColIndex + 1;
+  }
+
+  // Mapowanie: { Title → Set(bazowych nazw plików) }
+  const productImageBaseNames = {};
+
+  for (let i = 1; i < data.length; i++) {
+    const title = data[i][titleColIndex];
+    const imageUrl = data[i][imageColIndex];
+
+    if (!title || !imageUrl) continue;
+
+    // Wyciągnij bazową nazwę pliku (bez suffixu Shopify i parametrów)
+    let baseName = imageUrl.split("/").pop().split("?")[0]; // sama nazwa pliku
+    baseName = baseName.replace(/(_[a-f0-9\-]{36})?(\.\w{3,4})$/, '$2'); // usuń sufiks uuid przed rozszerzeniem
+
+    if (!productImageBaseNames[title]) {
+      productImageBaseNames[title] = new Set();
+    }
+
+    // Sprawdź, czy ta bazowa nazwa już była w tym produkcie
+    let status = "OK";
+    if (productImageBaseNames[title].has(baseName)) {
+      status = "DUPLIKAT w produkcie";
+    } else {
+      productImageBaseNames[title].add(baseName);
+    }
+
+    sheet.getRange(i + 1, statusColIndex + 1).setValue(status);
+  }
+
+  SpreadsheetApp.getUi().alert('Sprawdzono – kolumna "Status" została uzupełniona.');
+}
