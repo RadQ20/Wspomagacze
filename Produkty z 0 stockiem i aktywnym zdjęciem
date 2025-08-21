@@ -95,7 +95,7 @@ function przetworzDaneShopify() {
   }
 
   // Tworzenie końcowego wyniku
-  const finalData = [["Title", "Color", "Ostatnia sprzedaż"]];
+  const finalData = [["Title", "Color", "Ostatnia sprzedaż", "SKU ostatniej sprzedaży"]];
 
   for (const key in groups) {
     const group = groups[key];
@@ -111,19 +111,23 @@ function przetworzDaneShopify() {
         const title = rowWithImage[0];
         const color = rowWithImage[2];
 
-        // Pobierz najnowszą datę sprzedaży spośród SKU
+        // Pobierz najnowszą sprzedaż spośród SKU (tylko jeden wariant!)
         let latestDate = null;
+        let latestSku = null;
+
         group.skus.forEach(sku => {
           const date = salesMap[sku];
           if (date && (!latestDate || date > latestDate)) {
             latestDate = date;
+            latestSku = sku;
           }
         });
 
         finalData.push([
           title,
           color,
-          latestDate ? new Date(latestDate) : "-"
+          latestDate ? new Date(latestDate) : "-",
+          latestSku ? latestSku : "-"
         ]);
       }
     }
@@ -137,7 +141,7 @@ function przetworzDaneShopify() {
 
   // Zapisujemy finalny wynik do arkusza "Zerowe" (nadpisując wcześniejsze dane)
   resultSheet.clearContents();
-  resultSheet.getRange(1, 1, sortedFinalData.length, 3).setValues(sortedFinalData);
+  resultSheet.getRange(1, 1, sortedFinalData.length, 4).setValues(sortedFinalData);
 
   // Formatowanie: daty
   if (sortedFinalData.length > 1) {
@@ -145,11 +149,11 @@ function przetworzDaneShopify() {
   }
 
   // Obramowanie
-  const range = resultSheet.getRange(1, 1, sortedFinalData.length, 3);
+  const range = resultSheet.getRange(1, 1, sortedFinalData.length, 4);
   range.setBorder(true, true, true, true, true, true, "black", SpreadsheetApp.BorderStyle.SOLID);
 
   // Styl nagłówka
-  const headerRange = resultSheet.getRange(1, 1, 1, 3);
+  const headerRange = resultSheet.getRange(1, 1, 1, 4);
   headerRange.setFontWeight("bold");
   headerRange.setHorizontalAlignment("center");
   headerRange.setBackground("#ead1dc");
@@ -157,15 +161,13 @@ function przetworzDaneShopify() {
   // Zablokuj nagłówek
   resultSheet.setFrozenRows(1);
 
-  // Wyśrodkuj kolumny B i C
+  // Wyśrodkuj kolumny B, C i D
   if (sortedFinalData.length > 1) {
-    resultSheet.getRange(2, 2, sortedFinalData.length - 1, 2).setHorizontalAlignment("center");
+    resultSheet.getRange(2, 2, sortedFinalData.length - 1, 3).setHorizontalAlignment("center");
   }
 
   // Auto-szerokość
-  resultSheet.autoResizeColumn(1);
-  resultSheet.autoResizeColumn(2);
-  resultSheet.autoResizeColumn(3);
+  resultSheet.autoResizeColumns(1, 4);
 }
 
 function uzupelnijPusteKomorkiKolumna(sheet, columnIndex) {
