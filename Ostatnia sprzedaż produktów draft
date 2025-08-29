@@ -1,0 +1,120 @@
+function produktyDoArchiwizacji() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  // --- Arkusze ---
+  const produktySheet = ss.getSheetByName("Produkty");
+  const sprzedazSheet = ss.getSheetByName("Sprzedaż");
+
+  if (!produktySheet || !sprzedazSheet) {
+    SpreadsheetApp.getUi().alert("Brakuje arkusza 'Produkty' lub 'Sprzedaż'.");
+    return;
+  }
+
+  // --- Wczytanie danych produktowych ---
+  const produktyData = produktySheet.getDataRange().getValues();
+  const headerProdukty = produktyData[0];
+
+  const idxTitle = headerProdukty.indexOf("Title");
+  const idxSKU = headerProdukty.indexOf("Variant SKU");
+  const idxStatus = headerProdukty.indexOf("Status");
+
+  if ([idxTitle, idxSKU, idxStatus].includes(-1)) {
+    SpreadsheetApp.getUi().alert("W arkuszu 'Produkty' musi być: Title, Variant SKU, Status.");
+    return;
+  }
+
+  // --- Filtrowanie tylko draft ---
+  const draftMap = {}; // { produkt: [sku, sku...] }
+  for (let i = 1; i < produktyData.length; i++) {
+    const row = produktyData[i];
+    const title = row[idxTitle];
+    const sku = row[idxSKU];
+    const status = row[idxStatus];
+
+    if (status && status.toString().toLowerCase() === "draft" && sku) {
+      if (!draftMap[title]) draftMap[title] = [];
+      draftMap[title].push(sku);
+    }
+  }
+
+  if (Object.keys(draftMap).length === 0) {
+    SpreadsheetApp.getUi().alert("Brak produktów ze statusem draft.");
+    return;
+  }
+
+  // --- Wczytanie danych sprzedażowych ---
+  const sprzedazData = sprzedazSheet.getDataRange().getValues();
+  const headerSprzedaz = sprzedazData[0];
+
+  const idxSprzedazSKU = headerSprzedaz.indexOf("SKU");
+  const idxDay = headerSprzedaz.indexOf("Dzień");
+
+  if ([idxSprzedazSKU, idxDay].includes(-1)) {
+    SpreadsheetApp.getUi().alert("W arkuszu 'Sprzedaż' musi być: SKU, Dzień.");
+    return;
+  }
+
+  // --- Mapowanie ostatnich sprzedaży po SKU ---
+  const salesMap = {}; // {sku: lastDate}
+  for (let i = 1; i < sprzedazData.length; i++) {
+    const row = sprzedazData[i];
+    const sku = row[idxSprzedazSKU];
+    const date = row[idxDay];
+
+    if (!sku || !date) continue;
+    const parsedDate = new Date(date);
+
+    if (!salesMap[sku] || salesMap[sku] < parsedDate) {
+      salesMap[sku] = parsedDate;
+    }
+  }
+
+  // --- Budowanie wyników ---
+  const results = [["Nazwa produktu", "Ostatnia sprzedaż"]];
+
+  for (const title in draftMap) {
+    const skus = draftMap[title];
+    let lastSale = null;
+
+    skus.forEach(sku => {
+      const d = salesMap[sku];
+      if (d && (!lastSale || d > lastSale)) {
+        lastSale = d;
+      }
+    });
+
+    results.push([
+      title,
+      lastSale ? Utilities.formatDate(lastSale, Session.getScriptTimeZone(), "yyyy-MM-dd") : "brak sprzedaży"
+    ]);
+  }
+
+  // --- Sortowanie po dacie (rosnąco) ---
+  const dataToSort = results.slice(1);
+  dataToSort.sort((a, b) => {
+    if (a[1] === "brak sprzedaży") return -1;
+    if (b[1] === "brak sprzedaży") return 1;
+    return new Date(a[1]) - new Date(b[1]);
+  });
+
+  const finalData = [results[0], ...dataToSort];
+
+  // --- Wstawienie do arkusza "Do archiwizacji" ---
+  const resultSheetName = "Do archiwizacji";
+  let resultSheet = ss.getSheetByName(resultSheetName);
+  if (resultSheet) ss.deleteSheet(resultSheet);
+  resultSheet = ss.insertSheet(resultSheetName);
+
+  resultSheet.getRange(1, 1, finalData.length, finalData[0].length).setValues(finalData);
+
+  // --- Formatowanie ---
+  const headerRange = resultSheet.getRange(1, 1, 1, 2);
+  headerRange.setFontWeight("bold");
+  headerRange.setHorizontalAlignment("center");
+  headerRange.setBackground("#ead1dc");
+
+  resultSheet.setFrozenRows(1);
+  resultSheet.getDataRange().setBorder(true, true, true, true, true, true);
+
+  resultSheet.autoResizeColumns(1, 2);
+}
