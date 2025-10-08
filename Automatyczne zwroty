@@ -1,0 +1,124 @@
+/********** KONFIGURACJA **********/
+const CONFIG = {
+  MASTER_SHEET_ID: '1q_mPf8dxpQXoDWnaF9fOZlrbpIDR7IKX_gZSGYNl0fg',
+  LABEL_NEW: 'Zwroty',
+  LABEL_DONE_ROOT: 'Zwroty zrobione'
+};
+/**********************************/
+
+function main() {
+  processReturnsWithDateLabel();
+}
+
+function processReturnsWithDateLabel() {
+  const labelNew = GmailApp.getUserLabelByName(CONFIG.LABEL_NEW);
+  if (!labelNew) {
+    Logger.log('❌ Nie znaleziono etykiety: ' + CONFIG.LABEL_NEW);
+    return;
+  }
+
+  const threads = labelNew.getThreads();
+  if (threads.length === 0) {
+    Logger.log('📭 Brak maili z etykietą: ' + CONFIG.LABEL_NEW);
+    return;
+  }
+
+  // Przygotowanie dynamicznej etykiety "Zwroty zrobione/yyyy-mm-dd"
+  const today = new Date();
+  const yyyy = today.getFullYear();
+  const mm = String(today.getMonth() + 1).padStart(2, '0');
+  const dd = String(today.getDate()).padStart(2, '0');
+  const doneLabelName = `${CONFIG.LABEL_DONE_ROOT}/${yyyy}-${mm}-${dd}`;
+
+  let labelDone = GmailApp.getUserLabelByName(doneLabelName);
+  if (!labelDone) labelDone = GmailApp.createLabel(doneLabelName);
+
+  // Obiekt do sumowania danych po SKU
+  const mergedData = {};
+
+  threads.forEach(thread => {
+    const messages = thread.getMessages();
+    messages.forEach(msg => {
+      const attachments = msg.getAttachments();
+      attachments.forEach(att => {
+        if (att.getName().toLowerCase().endsWith('.csv')) {
+          let text;
+          try {
+            text = att.getDataAsString('utf-8');
+          } catch (e) {
+            text = att.getDataAsString('windows-1250');
+          }
+
+          const delim = detectDelimiter(text);
+          const rows = Utilities.parseCsv(text, delim);
+          const fileName = att.getName();
+
+          // Pomijamy pierwszy wiersz (nagłówki)
+          for (let i = 1; i < rows.length; i++) {
+            const sku = rows[i][0] ? rows[i][0].trim() : '';
+            const name = rows[i][1] ? rows[i][1].trim() : '';
+            const qty = rows[i][3] ? Number(rows[i][3]) : 0; // kolumna D = Ilosc
+
+            if (!sku || isNaN(qty)) continue;
+
+            if (mergedData[sku]) {
+              mergedData[sku].quantity += qty;
+              if (!mergedData[sku].files.includes(fileName)) {
+                mergedData[sku].files.push(fileName);
+              }
+            } else {
+              mergedData[sku] = {
+                quantity: qty,
+                product: name,
+                files: [fileName]
+              };
+            }
+          }
+        }
+      });
+    });
+
+    // Oznacz wątek jako przeczytany i zaktualizuj etykiety
+    thread.markRead();
+    thread.removeLabel(labelNew);
+    thread.addLabel(labelDone);
+  });
+
+  // Nazwa arkusza = data (dd.mm.yyyy)
+  const sheetName = `${dd}.${mm}.${yyyy}`;
+  const ss = SpreadsheetApp.openById(CONFIG.MASTER_SHEET_ID);
+  let sheet = ss.getSheetByName(sheetName);
+  if (sheet) {
+    sheet.clearContents();
+  } else {
+    sheet = ss.insertSheet(sheetName);
+  }
+
+  // Przygotowanie danych do zapisania
+  const output = [['Product', 'SKU', 'Quantity', 'Source File']];
+  for (const sku in mergedData) {
+    output.push([
+      mergedData[sku].product,
+      sku,
+      mergedData[sku].quantity,
+      mergedData[sku].files.join(', ')
+    ]);
+  }
+
+  if (output.length > 1) {
+    sheet.getRange(1, 1, output.length, output[0].length).setValues(output);
+    Logger.log(`✅ Zapisano dane do arkusza: ${sheetName}`);
+  } else {
+    Logger.log('⚠️ Nie znaleziono żadnych danych CSV do zapisania.');
+  }
+
+  Logger.log(`📁 Maile przeniesione do etykiety: ${doneLabelName}`);
+}
+
+/* Pomocnicza funkcja wykrywania separatora CSV */
+function detectDelimiter(text) {
+  const firstLine = text.split(/\r?\n/)[0] || '';
+  const comma = (firstLine.match(/,/g) || []).length;
+  const semi = (firstLine.match(/;/g) || []).length;
+  return semi > comma ? ';' : ',';
+}
