@@ -7,10 +7,10 @@ const CONFIG = {
 /**********************************/
 
 function main() {
-  processReturnsWithDateLabel();
+  processReturnsWithRomanLabels();
 }
 
-function processReturnsWithDateLabel() {
+function processReturnsWithRomanLabels() {
   const labelNew = GmailApp.getUserLabelByName(CONFIG.LABEL_NEW);
   if (!labelNew) {
     Logger.log('❌ Nie znaleziono etykiety: ' + CONFIG.LABEL_NEW);
@@ -23,13 +23,37 @@ function processReturnsWithDateLabel() {
     return;
   }
 
-  // Przygotowanie dynamicznej etykiety "Zwroty zrobione/yyyy-mm-dd"
+  // Przygotowanie daty
   const today = new Date();
   const yyyy = today.getFullYear();
   const mm = String(today.getMonth() + 1).padStart(2, '0');
   const dd = String(today.getDate()).padStart(2, '0');
-  const doneLabelName = `${CONFIG.LABEL_DONE_ROOT}/${yyyy}-${mm}-${dd}`;
 
+  // Sprawdź, ile raportów z dzisiejszą datą już istnieje
+  const ss = SpreadsheetApp.openById(CONFIG.MASTER_SHEET_ID);
+  const sheets = ss.getSheets();
+  const dateBaseName = `${dd}.${mm}.${yyyy}`;
+
+  // Filtruj arkusze, które zaczynają się od tej daty
+  const existingSheets = sheets
+    .map(s => s.getName())
+    .filter(n => n.startsWith(dateBaseName));
+
+  let suffix = '';
+  if (existingSheets.length > 0) {
+    suffix = ' ' + toRoman(existingSheets.length + 1);
+  }
+
+  const finalSheetName = dateBaseName + suffix;
+  Logger.log(`📄 Tworzenie arkusza: ${finalSheetName}`);
+
+  // Przygotowanie etykiety Gmail (z tym samym numerem rzymskim)
+  let labelSuffix = '';
+  if (existingSheets.length > 0) {
+    labelSuffix = ' ' + toRoman(existingSheets.length + 1);
+  }
+
+  const doneLabelName = `${CONFIG.LABEL_DONE_ROOT}/${yyyy}-${mm}-${dd}${labelSuffix}`;
   let labelDone = GmailApp.getUserLabelByName(doneLabelName);
   if (!labelDone) labelDone = GmailApp.createLabel(doneLabelName);
 
@@ -57,7 +81,7 @@ function processReturnsWithDateLabel() {
           for (let i = 1; i < rows.length; i++) {
             const sku = rows[i][0] ? rows[i][0].trim() : '';
             const name = rows[i][1] ? rows[i][1].trim() : '';
-            const qty = rows[i][3] ? Number(rows[i][3]) : 0; // kolumna D = Ilosc
+            const qty = rows[i][3] ? Number(rows[i][3]) : 0;
 
             if (!sku || isNaN(qty)) continue;
 
@@ -78,24 +102,16 @@ function processReturnsWithDateLabel() {
       });
     });
 
-    // Oznacz wątek jako przeczytany i zaktualizuj etykiety
+    // Oznacz mail jako przeczytany i zaktualizuj etykiety
     thread.markRead();
     thread.removeLabel(labelNew);
     thread.addLabel(labelDone);
   });
 
-  // Nazwa arkusza = data (dd.mm.yyyy)
-  const sheetName = `${dd}.${mm}.${yyyy}`;
-  const ss = SpreadsheetApp.openById(CONFIG.MASTER_SHEET_ID);
-  let sheet = ss.getSheetByName(sheetName);
-  if (sheet) {
-    sheet.clearContents();
-  } else {
-    sheet = ss.insertSheet(sheetName);
-  }
-
-  // Przygotowanie danych do zapisania
+  // Tworzenie arkusza
+  const sheet = ss.insertSheet(finalSheetName);
   const output = [['Product', 'SKU', 'Quantity', 'Source File']];
+
   for (const sku in mergedData) {
     output.push([
       mergedData[sku].product,
@@ -107,18 +123,35 @@ function processReturnsWithDateLabel() {
 
   if (output.length > 1) {
     sheet.getRange(1, 1, output.length, output[0].length).setValues(output);
-    Logger.log(`✅ Zapisano dane do arkusza: ${sheetName}`);
+    Logger.log(`✅ Zapisano dane do arkusza: ${finalSheetName}`);
   } else {
     Logger.log('⚠️ Nie znaleziono żadnych danych CSV do zapisania.');
   }
 
-  Logger.log(`📁 Maile przeniesione do etykiety: ${doneLabelName}`);
+  Logger.log(`🏷️ Maile przeniesione do etykiety: ${doneLabelName}`);
 }
 
-/* Pomocnicza funkcja wykrywania separatora CSV */
+/* Pomocnicza funkcja: wykrywanie separatora CSV */
 function detectDelimiter(text) {
   const firstLine = text.split(/\r?\n/)[0] || '';
   const comma = (firstLine.match(/,/g) || []).length;
   const semi = (firstLine.match(/;/g) || []).length;
   return semi > comma ? ';' : ',';
+}
+
+/* Pomocnicza funkcja: konwersja liczb na cyfry rzymskie */
+function toRoman(num) {
+  const romans = [
+    ['M', 1000], ['CM', 900], ['D', 500], ['CD', 400],
+    ['C', 100], ['XC', 90], ['L', 50], ['XL', 40],
+    ['X', 10], ['IX', 9], ['V', 5], ['IV', 4], ['I', 1]
+  ];
+  let result = '';
+  for (let [letter, value] of romans) {
+    while (num >= value) {
+      result += letter;
+      num -= value;
+    }
+  }
+  return result;
 }
