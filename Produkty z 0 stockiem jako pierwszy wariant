@@ -1,13 +1,72 @@
-function sprawdzKolejnoscKolorow() {
+function przygotujDaneISprawdzKolejnoscKolorow() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getActiveSheet();
+  const sourceSheet = ss.getActiveSheet();
+
+  // ===== 1️⃣ Duplikuj aktywny arkusz =====
+  let tempSheet = ss.getSheetByName("TEMP");
+  if (tempSheet) ss.deleteSheet(tempSheet);
+  tempSheet = sourceSheet.copyTo(ss);
+  tempSheet.setName("TEMP");
+  ss.setActiveSheet(tempSheet);
+
+  // ===== 2️⃣ Usuń zbędne kolumny =====
+  const requiredColumns = [
+    "Title",
+    "Published",
+    "Option1 Value",
+    "Variant Inventory Qty"
+  ];
+  const header = tempSheet.getDataRange().getValues()[0];
+
+  for (let i = header.length; i >= 1; i--) {
+    if (!requiredColumns.includes(header[i - 1].trim())) {
+      tempSheet.deleteColumn(i);
+    }
+  }
+
+  // ===== 3️⃣ Uzupełnij puste komórki w Title i Published =====
+  uzupelnijPusteKomorkiZGoryKolumna(tempSheet, "Title");
+  uzupelnijPusteKomorkiZGoryKolumna(tempSheet, "Published");
+
+  // ===== 4️⃣ Uruchom analizę kolejności kolorów =====
+  sprawdzKolejnoscKolorow(tempSheet);
+
+  // (opcjonalnie) usuń tymczasowy arkusz po zakończeniu
+  // ss.deleteSheet(tempSheet);
+}
+
+function uzupelnijPusteKomorkiZGoryKolumna(sheet, columnName) {
+  const header = sheet.getDataRange().getValues()[0];
+  const colIndex = header.indexOf(columnName);
+  if (colIndex === -1) return;
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return;
+
+  const range = sheet.getRange(2, colIndex + 1, lastRow - 1, 1);
+  const values = range.getValues();
+  let lastValue = null;
+
+  for (let i = 0; i < values.length; i++) {
+    if (values[i][0] !== "") {
+      lastValue = values[i][0];
+    } else if (lastValue !== null) {
+      values[i][0] = lastValue;
+    }
+  }
+
+  range.setValues(values);
+}
+
+function sprawdzKolejnoscKolorow(sheet) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
   const data = sheet.getDataRange().getValues();
 
   const header = data[0];
   const titleCol = header.indexOf("Title");
   const colorCol = header.indexOf("Option1 Value");
   const qtyCol = header.indexOf("Variant Inventory Qty");
-  const publishedCol = header.indexOf("Published"); // <- dodano
+  const publishedCol = header.indexOf("Published");
 
   if ([titleCol, colorCol, qtyCol, publishedCol].includes(-1)) {
     SpreadsheetApp.getUi().alert("Brakuje wymaganych kolumn: Title, Option1 Value, Variant Inventory Qty, Published");
@@ -16,16 +75,15 @@ function sprawdzKolejnoscKolorow() {
 
   const results = [["Title", "Wymaga zmiany?"]];
   const productMap = {};
-  const productStatus = {}; // przechowuje czy produkt jest opublikowany
 
-  // Grupowanie wierszy wg produktu
+  // Grupowanie po Title
   for (let i = 1; i < data.length; i++) {
     const title = data[i][titleCol];
     const color = data[i][colorCol];
     const qty = Number(data[i][qtyCol]);
     const published = data[i][publishedCol];
 
-    if (!(published === true || published === "TRUE")) continue; // <- filtr opublikowanych
+    if (!(published === true || published === "TRUE")) continue;
 
     if (!productMap[title]) {
       productMap[title] = [];
@@ -33,11 +91,10 @@ function sprawdzKolejnoscKolorow() {
     productMap[title].push({ color, qty });
   }
 
-  // Analiza kolejności
+  // Analiza kolejności kolorów
   for (const title in productMap) {
     const rows = productMap[title];
     const colorBlocks = [];
-
     let currentColor = rows[0].color;
     let currentQtySum = 0;
 
@@ -53,7 +110,7 @@ function sprawdzKolejnoscKolorow() {
     }
     colorBlocks.push({ color: currentColor, qty: currentQtySum });
 
-    // Sprawdź, czy pierwsze kolory mają qty == 0, a któryś później ma > 0
+    // Sprawdzenie – jeśli pierwsze kolory mają 0, a później >0 → TAK
     let requiresChange = false;
     for (let i = 0; i < colorBlocks.length; i++) {
       if (colorBlocks[i].qty > 0) {
@@ -67,14 +124,14 @@ function sprawdzKolejnoscKolorow() {
     }
   }
 
-  // Stwórz nowy arkusz z wynikami
+  // ===== 5️⃣ Utwórz arkusz z wynikami =====
   const resultSheetName = "Do zmiany kolejności";
   let resultSheet = ss.getSheetByName(resultSheetName);
   if (resultSheet) ss.deleteSheet(resultSheet);
   resultSheet = ss.insertSheet(resultSheetName);
   resultSheet.getRange(1, 1, results.length, 2).setValues(results);
 
-  // Stylizacja
+  // ===== 6️⃣ Stylizacja =====
   const headerRange = resultSheet.getRange(1, 1, 1, 2);
   headerRange.setFontWeight("bold");
   headerRange.setHorizontalAlignment("center");
