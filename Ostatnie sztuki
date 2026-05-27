@@ -1,0 +1,161 @@
+function znajdzProduktyDoOstatnichSztuk() {
+
+  // ================================
+  // USTAWIENIA
+  // ================================
+  const LOW_STOCK_LIMIT = 15;
+  const TARGET_TAG = "ostatnie sztuki";
+  const RESULT_SHEET_NAME = "Do dodania";
+
+  // ================================
+  // POBRANIE DANYCH
+  // ================================
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getActiveSheet();
+  const data = sheet.getDataRange().getValues();
+
+  const header = data[0];
+
+  // ================================
+  // MAPOWANIE KOLUMN
+  // ================================
+  const columnMap = {};
+
+  header.forEach((name, index) => {
+    columnMap[name.trim()] = index;
+  });
+
+  const titleCol = columnMap["Title"];
+  const publishedCol = columnMap["Published"];
+  const tagsCol = columnMap["Tags"];
+  const qtyCol = columnMap["Variant Inventory Qty"];
+
+  // ================================
+  // GRUPOWANIE PRODUKTÓW
+  // ================================
+  const products = {};
+
+  let currentTitle = "";
+  let currentTags = "";
+  let currentPublished = "";
+
+  for (let i = 1; i < data.length; i++) {
+
+    const row = data[i];
+
+    // Uzupełnianie pustych komórek z Shopify
+    if (row[titleCol] !== "") {
+      currentTitle = row[titleCol];
+    }
+
+    if (row[tagsCol] !== "") {
+      currentTags = row[tagsCol];
+    }
+
+    if (row[publishedCol] !== "") {
+      currentPublished = row[publishedCol];
+    }
+
+    const title = currentTitle;
+    const tags = String(currentTags).toLowerCase();
+    const published = currentPublished === true || currentPublished === "TRUE";
+
+    const qty = Number(row[qtyCol]) || 0;
+
+    // Tworzenie produktu jeśli nie istnieje
+    if (!products[title]) {
+      products[title] = {
+        totalQty: 0,
+        tags: tags,
+        published: published
+      };
+    }
+
+    // Sumowanie stocku wariantów
+    products[title].totalQty += qty;
+  }
+
+  // ================================
+  // TWORZENIE WYNIKU
+  // ================================
+  const result = [
+    ["Product", "Total Stock", "Do dodania"]
+  ];
+
+  for (const title in products) {
+
+    const product = products[title];
+
+    const hasTargetTag = product.tags.includes(
+      TARGET_TAG.toLowerCase()
+    );
+
+    const lowStock = product.totalQty <= LOW_STOCK_LIMIT;
+
+    if (
+      lowStock &&
+      product.published &&
+      !hasTargetTag
+    ) {
+
+      result.push([
+        title,
+        product.totalQty,
+        TARGET_TAG
+      ]);
+    }
+  }
+
+  // ================================
+  // SORTOWANIE
+  // ================================
+  const sortedData = result.slice(1);
+
+  sortedData.sort((a, b) => a[1] - b[1]);
+
+  const finalData = [result[0], ...sortedData];
+
+  // ================================
+  // ARKUSZ WYNIKOWY
+  // ================================
+  let resultSheet = ss.getSheetByName(RESULT_SHEET_NAME);
+
+  if (!resultSheet) {
+    resultSheet = ss.insertSheet(RESULT_SHEET_NAME);
+  } else {
+    resultSheet.clearContents();
+  }
+
+  // ================================
+  // WSTAWIANIE DANYCH
+  // ================================
+  resultSheet
+    .getRange(1, 1, finalData.length, finalData[0].length)
+    .setValues(finalData);
+
+  // ================================
+  // FORMATOWANIE
+  // ================================
+  const headerRange = resultSheet.getRange(1, 1, 1, 3);
+
+  headerRange.setFontWeight("bold");
+  headerRange.setBackground("#fce5cd");
+  headerRange.setHorizontalAlignment("center");
+
+  resultSheet.setFrozenRows(1);
+
+  if (finalData.length > 1) {
+
+    resultSheet
+      .getRange(2, 2, finalData.length - 1, 2)
+      .setHorizontalAlignment("center");
+  }
+
+  // Obramowanie
+  resultSheet
+    .getRange(1, 1, finalData.length, 3)
+    .setBorder(true, true, true, true, true, true);
+
+  // Auto szerokość
+  resultSheet.autoResizeColumns(1, 3);
+}
